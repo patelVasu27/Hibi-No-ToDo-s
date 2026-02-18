@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { PlusIcon, MicrophoneIcon, StopIcon } from './Icons';
 import { GoogleGenAI } from "@google/genai";
 
@@ -12,10 +12,28 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const [dueDate, setDueDate] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionStatus, setTranscriptionStatus] = useState('');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const transcriptionTimeoutRef = useRef<number | null>(null);
+
+  const statuses = ["Analyzing audio...", "AI is processing...", "Finalizing task...", "Almost there..."];
+
+  useEffect(() => {
+    let interval: number;
+    if (isTranscribing) {
+      let i = 0;
+      setTranscriptionStatus(statuses[0]);
+      interval = window.setInterval(() => {
+        i = (i + 1) % statuses.length;
+        setTranscriptionStatus(statuses[i]);
+      }, 2500);
+    } else {
+      setTranscriptionStatus('');
+    }
+    return () => clearInterval(interval);
+  }, [isTranscribing]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +69,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-        // Minimum size check (approx 2KB) to ensure we have actual audio data
         if (audioBlob.size > 2000) { 
             transcribeAudio(audioBlob);
         } else {
@@ -79,7 +96,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const transcribeAudio = async (blob: Blob) => {
     setIsTranscribing(true);
     
-    // Safety timeout to reset UI if API hangs
     transcriptionTimeoutRef.current = window.setTimeout(() => {
       if (isTranscribing) {
         setIsTranscribing(false);
@@ -102,7 +118,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
         reader.readAsDataURL(blob);
       });
 
-      // Using gemini-3-flash-preview for high accuracy in text extraction tasks
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const normalizedMimeType = blob.type.split(';')[0] || 'audio/webm';
 
@@ -120,8 +135,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           ]
         },
         config: {
-          temperature: 0.1, // Low temperature for consistent transcription
-          thinkingConfig: { thinkingBudget: 0 } // Disable thinking for immediate result
+          temperature: 0.1,
+          thinkingConfig: { thinkingBudget: 0 }
         }
       });
 
@@ -130,8 +145,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       }
 
       const transcript = response.text;
-      console.log("Transcribed text:", transcript);
-
       if (transcript && transcript.trim()) {
         const cleanedText = transcript.trim()
           .replace(/^["']|["']$/g, '')
@@ -158,18 +171,22 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-3 mb-8">
-      <div className="flex-grow relative">
+      <div className="flex-grow relative overflow-hidden rounded-lg">
         <input
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={isTranscribing ? "Transcribing..." : isRecording ? "Recording... (tap to finish)" : "Add a new task..."}
+          placeholder={isTranscribing ? transcriptionStatus : isRecording ? "Recording... (tap to finish)" : "Add a new task..."}
           aria-label="Add a new task"
           disabled={isTranscribing}
-          className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'animate-pulse opacity-70' : ''}`}
+          className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'opacity-70' : ''}`}
         />
         {isTranscribing && (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+          <div className="processing-bar" />
+        )}
+        {isTranscribing && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+            <span className="text-[10px] text-blue-400 font-mono tracking-widest uppercase hidden sm:inline">Processing</span>
             <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
           </div>
         )}
@@ -188,12 +205,15 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
               type="button"
               onClick={toggleRecording}
               aria-label={isRecording ? "Stop recording" : "Record voice task"}
-              className={`p-3 rounded-lg transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center relative ${isRecording ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-white/10 text-gray-400 hover:text-white hover:bg-white/20'}`}
+              className={`p-3 rounded-lg transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center relative ${isRecording ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : isTranscribing ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-400 hover:text-white hover:bg-white/20'}`}
               disabled={isTranscribing}
           >
               {isRecording ? <StopIcon className="h-6 w-6" /> : <MicrophoneIcon className="h-6 w-6" />}
               {isRecording && (
                 <span className="absolute inset-0 rounded-lg animate-ping bg-red-500 opacity-20 pointer-events-none"></span>
+              )}
+              {isTranscribing && (
+                <span className="absolute inset-0 rounded-lg animate-pulse bg-blue-400 opacity-40 pointer-events-none"></span>
               )}
           </button>
           <button

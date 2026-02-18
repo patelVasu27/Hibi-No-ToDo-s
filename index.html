@@ -64,6 +64,22 @@
         100% { background-position: -200% center; }
       }
 
+      /* Processing Shimmer Bar */
+      @keyframes processing-flow {
+        0% { transform: translateX(-100%); }
+        50% { transform: translateX(100%); }
+        100% { transform: translateX(-100%); }
+      }
+      .processing-bar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        height: 2px;
+        width: 100%;
+        background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+        animation: processing-flow 2s ease-in-out infinite;
+      }
+
       /* Entrance Animation for new tasks */
       @keyframes task-entrance {
         from {
@@ -111,6 +127,7 @@
 
       .task-item {
         animation: task-entrance 0.4s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        transition: all 0.2s ease-out;
       }
 
       .task-item.removing {
@@ -151,9 +168,12 @@
         animation-fill-mode: forwards;
       }
 
+      /* Enhanced Drop Target */
       li[data-dragging-over='true'] {
-          outline: 2px dashed #3b82f6;
-          outline-offset: -2px;
+          background-color: rgba(59, 130, 246, 0.15) !important;
+          box-shadow: 0 0 15px rgba(59, 130, 246, 0.3) !important;
+          border-color: rgba(59, 130, 246, 0.5) !important;
+          transform: scale(1.02) !important;
       }
 
       @keyframes pop-in {

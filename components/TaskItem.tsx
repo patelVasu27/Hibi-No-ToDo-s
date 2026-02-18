@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Task } from '../types';
 import { TrashIcon, StarIcon, DocumentTextIcon, Bars2Icon } from './Icons';
@@ -133,10 +134,10 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, isSelected, isSelectionMode, 
 
     return (
         <li
-            className={`task-item flex items-center p-4 rounded-lg transition-all duration-300 transform 
-                ${isSelected ? 'bg-blue-900/50' : 'bg-white/5 hover:bg-white/10 hover:scale-[1.01] hover:shadow-lg hover:shadow-blue-500/20'} 
+            className={`task-item flex items-center p-4 rounded-lg border border-transparent transition-all duration-300 transform 
+                ${isSelected ? 'bg-blue-900/40 border-blue-500/30' : 'bg-white/5 hover:bg-white/10 hover:scale-[1.01] hover:shadow-lg hover:shadow-blue-500/10'} 
                 ${isSelectionMode ? 'cursor-pointer' : 'cursor-default'} 
-                ${isDragging ? 'opacity-50' : 'opacity-100'} 
+                ${isDragging ? 'scale-[0.97] rotate-1 opacity-40 grayscale blur-[1px] shadow-none ring-2 ring-blue-500/20' : 'opacity-100'} 
                 ${isJustDropped ? 'dropped' : ''}
                 ${isRemoving ? 'removing' : ''}`}
             onMouseDown={handlePressStart}
@@ -153,7 +154,7 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, isSelected, isSelectionMode, 
         >
             {!isSelectionMode && (
                 <div
-                    className="flex-shrink-0 cursor-grab text-gray-500 hover:text-white mr-3 touch-none"
+                    className="flex-shrink-0 cursor-grab active:cursor-grabbing text-gray-500 hover:text-white mr-3 touch-none"
                     draggable
                     onDragStart={e => onDragStart(e, task.id)}
                     onMouseDown={e => e.stopPropagation()}
