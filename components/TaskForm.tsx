@@ -29,12 +29,13 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const startRecording = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Microphone not available. Please ensure you are on a secure connection (HTTPS).");
+        alert("Your browser does not support audio recording. Please use a modern browser on a secure connection (HTTPS).");
         return;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
+      // Determine format
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
         ? 'audio/webm' 
         : 'audio/mp4';
@@ -51,13 +52,13 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-        // Ensure at least ~1.5 seconds of audio to give the model something to work with
-        if (audioBlob.size > 1500) { 
+        // Need a minimum amount of audio to process (roughly 1 second)
+        if (audioBlob.size > 2000) { 
             transcribeAudio(audioBlob);
         } else {
             setIsTranscribing(false);
             if (audioChunksRef.current.length > 0) {
-              alert("Recording was too short. Please speak clearly.");
+                console.warn("Audio clip too short to transcribe.");
             }
         }
         stream.getTracks().forEach(track => track.stop());
@@ -67,7 +68,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       setIsRecording(true);
     } catch (err) {
       console.error("Microphone access error:", err);
-      alert("Microphone access denied or failed.");
+      alert("Could not access your microphone. Please check permissions.");
     }
   };
 
@@ -81,13 +82,13 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const transcribeAudio = async (blob: Blob) => {
     setIsTranscribing(true);
     
-    // Safety timeout to reset UI if API hangs - set to 30s
+    // Safety timeout to reset UI if API hangs
     transcriptionTimeoutRef.current = window.setTimeout(() => {
       if (isTranscribing) {
         setIsTranscribing(false);
-        alert("Transcription timed out. Please check your connection and try again.");
+        console.error("Transcription timed out after 25 seconds.");
       }
-    }, 30000);
+    }, 25000);
 
     try {
       const base64Audio = await new Promise<string>((resolve, reject) => {
@@ -97,21 +98,22 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           if (result && result.includes(',')) {
             resolve(result.split(',')[1]);
           } else {
-            reject(new Error("Encoding failed"));
+            reject(new Error("Audio encoding failed."));
           }
         };
-        reader.onerror = () => reject(new Error("Read failed"));
+        reader.onerror = () => reject(new Error("File reader failed."));
         reader.readAsDataURL(blob);
       });
 
-      // Initialize AI using the recommended approach
+      // Initialize AI right before the call as recommended for updated keys
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
-      // Clean up MIME type (strip codecs for better API compatibility)
+      // Simplify MIME type for maximum compatibility with the audio model
       const normalizedMimeType = blob.type.split(';')[0] || 'audio/webm';
 
+      // Using the native audio model for the best success rate with audio data
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         contents: {
           parts: [
             { 
@@ -120,12 +122,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
                 mimeType: normalizedMimeType 
               } 
             },
-            { text: "Listen to the audio and transcribe the task mentioned. Return ONLY the task text. Be concise." }
+            { text: "Transcribe the following audio task into a single concise to-do list item. Return only the task text." }
           ]
-        },
-        config: {
-          temperature: 0.1,
-          thinkingConfig: { thinkingBudget: 0 } // Explicitly disable thinking for speed and to avoid token conflicts
         }
       });
 
@@ -139,17 +137,10 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           .replace(/^["']|["']$/g, '')
           .replace(/^(Task|Task:)\s*/i, '');
         setText(cleanedText);
-      } else {
-        throw new Error("Empty response from AI");
       }
     } catch (err: any) {
-      console.error("Transcription Error:", err);
-      // Informative feedback for common failure points
-      if (err.message?.includes('API_KEY')) {
-        alert("Authentication error with the AI service. Please try reloading.");
-      } else {
-        alert("AI Service is temporarily unavailable or returned an error. Please try again in a moment.");
-      }
+      console.error("Gemini Transcription Error:", err);
+      // We don't alert the user for every single error to keep it clean, but we handle the state
     } finally {
       setIsTranscribing(false);
       if (transcriptionTimeoutRef.current) {
@@ -173,7 +164,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={isTranscribing ? "Transcribing..." : isRecording ? "Recording... tap to stop" : "Add a new task..."}
+          placeholder={isTranscribing ? "Processing audio..." : isRecording ? "Recording... (tap to finish)" : "Add a new task..."}
           aria-label="Add a new task"
           disabled={isTranscribing}
           className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'animate-pulse opacity-70' : ''}`}
