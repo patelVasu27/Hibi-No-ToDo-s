@@ -29,13 +29,12 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const startRecording = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Audio recording is not supported in this browser environment. Ensure you are using HTTPS.");
+        alert("Audio recording is not supported. Please ensure you are using a modern browser with HTTPS.");
         return;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Determine the most robust MIME type supported by the browser
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
         ? 'audio/webm' 
         : 'audio/mp4';
@@ -52,7 +51,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-        // Minimum size check to avoid processing accidental tiny clicks
         if (audioBlob.size > 1000) { 
             transcribeAudio(audioBlob);
         } else {
@@ -65,7 +63,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       setIsRecording(true);
     } catch (err) {
       console.error("Microphone access error:", err);
-      alert("Microphone access failed. Please ensure you have granted permissions.");
+      alert("Could not access microphone. Please check browser permissions.");
     }
   };
 
@@ -79,37 +77,37 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const transcribeAudio = async (blob: Blob) => {
     setIsTranscribing(true);
     
-    // Set a safety timeout (15 seconds) to reset the UI if the API hangs
+    // Safety timeout to reset UI if API hangs
     transcriptionTimeoutRef.current = window.setTimeout(() => {
       if (isTranscribing) {
         setIsTranscribing(false);
-        alert("Transcription is taking longer than expected. Please check your connection and try again.");
+        alert("Transcription is taking too long. Please try again.");
       }
-    }, 15000);
+    }, 20000);
 
     try {
       const base64Audio = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
           const result = reader.result as string;
-          resolve(result.split(',')[1]);
+          if (result.includes(',')) {
+            resolve(result.split(',')[1]);
+          } else {
+            reject(new Error("Failed to encode audio data correctly."));
+          }
         };
-        reader.onerror = () => reject(new Error("Audio encoding failed"));
+        reader.onerror = () => reject(new Error("Audio reader failed"));
         reader.readAsDataURL(blob);
       });
 
-      if (!process.env.API_KEY) {
-        throw new Error("API Key is missing. Please check your environment variables.");
-      }
-
+      // Initialize AI instance. Relying on process.env.API_KEY injection.
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
-      // Normalize MIME type to simple base formats expected by the API
+      // Strict MIME type normalization (remove codec info)
       const normalizedMimeType = blob.type.split(';')[0] || 'audio/webm';
 
-      // Using the Native Audio model for best performance and latency
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        model: 'gemini-3-flash-preview',
         contents: {
           parts: [
             { 
@@ -118,16 +116,15 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
                 mimeType: normalizedMimeType 
               } 
             },
-            { text: "Transcribe this audio clip into a short, clear to-do list task. Output ONLY the text of the task." }
+            { text: "Listen to this audio and write down the single to-do list task mentioned. Return ONLY the text of the task. Keep it very short." }
           ]
         },
         config: {
-          maxOutputTokens: 60,
-          temperature: 0, // Zero temperature for the most accurate transcription
+          maxOutputTokens: 50,
+          temperature: 0,
         }
       });
 
-      // Clear timeout as response received
       if (transcriptionTimeoutRef.current) {
         window.clearTimeout(transcriptionTimeoutRef.current);
       }
@@ -140,8 +137,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
         setText(cleanedText);
       }
     } catch (err: any) {
-      console.error("Transcription error:", err);
-      alert(err.message || "Failed to connect to the AI service. Please try again.");
+      console.error("Transcription API error:", err);
+      alert("AI Service error. Please check your internet connection and try again.");
     } finally {
       setIsTranscribing(false);
       if (transcriptionTimeoutRef.current) {
@@ -165,7 +162,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={isTranscribing ? "Analyzing audio..." : isRecording ? "Recording... (tap to stop)" : "Add a new task..."}
+          placeholder={isTranscribing ? "Thinking..." : isRecording ? "Recording..." : "Add a new task..."}
           aria-label="Add a new task"
           disabled={isTranscribing}
           className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'animate-pulse opacity-70' : ''}`}
