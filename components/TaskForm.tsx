@@ -27,15 +27,14 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
   const startRecording = async () => {
     try {
-      // Check for browser support
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Your browser does not support audio recording.");
+        alert("Audio recording is not supported in this browser or context (requires HTTPS).");
         return;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Determine supported mime type
+      // Determine supported mime type carefully
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
         ? 'audio/webm' 
         : 'audio/mp4';
@@ -50,17 +49,22 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
         }
       };
 
-      mediaRecorder.onstop = async () => {
+      mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-        transcribeAudio(audioBlob);
+        if (audioBlob.size > 1000) { // Ensure there's actually audio data (>1KB)
+            transcribeAudio(audioBlob);
+        } else {
+            console.warn("Audio recording too short or empty.");
+            setIsTranscribing(false);
+        }
         stream.getTracks().forEach(track => track.stop());
       };
 
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Could not access microphone. Please ensure you have granted permission and are using HTTPS.");
+      console.error("Microphone access error:", err);
+      alert("Microphone access denied or failed. Ensure your site is served over HTTPS.");
     }
   };
 
@@ -79,31 +83,37 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       reader.onloadend = async () => {
         const base64Audio = (reader.result as string).split(',')[1];
         
+        if (!process.env.API_KEY) {
+            throw new Error("API Key is missing from environment.");
+        }
+
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        // Clean MIME type: API expects 'audio/webm', not 'audio/webm;codecs=opus'
+        const cleanMimeType = blob.type.split(';')[0] || 'audio/webm';
+
         const response = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
-          contents: {
+          contents: [{
             parts: [
               { 
                 inlineData: { 
                   data: base64Audio, 
-                  mimeType: blob.type || 'audio/webm' 
+                  mimeType: cleanMimeType 
                 } 
               },
-              { text: "Transcribe this audio into a single, concise to-do list task string. Output ONLY the transcribed text. Do not include quotes or preamble." }
+              { text: "Transcribe this audio. Return ONLY the text of the task. Keep it concise. No conversational filler." }
             ]
-          },
+          }],
           config: {
-            // Optimization: Disable thinking for faster transcription
-            thinkingConfig: { thinkingBudget: 0 },
-            maxOutputTokens: 150,
-            temperature: 0.1, // Lower temperature for more deterministic transcription
+            thinkingConfig: { thinkingBudget: 0 }, // Minimize latency
+            maxOutputTokens: 100,
+            temperature: 0, // Deterministic output
           }
         });
 
         const transcript = response.text || "";
         if (transcript.trim()) {
-          // Clean up potential AI artifacts like "Task: " or quotes
           const cleanedText = transcript.trim()
             .replace(/^["']|["']$/g, '')
             .replace(/^Task:\s*/i, '');
@@ -112,9 +122,9 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
         setIsTranscribing(false);
       };
     } catch (err) {
-      console.error("Transcription error:", err);
+      console.error("Transcription API Error:", err);
       setIsTranscribing(false);
-      alert("Transcription failed. This can happen on slow connections or with unsupported audio formats.");
+      alert("API Connection Error. Please verify your internet connection and API key status.");
     }
   };
 
@@ -133,7 +143,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={isTranscribing ? "Processing audio..." : "Add a new task..."}
+          placeholder={isTranscribing ? "Processing audio..." : isRecording ? "Listening..." : "Add a new task..."}
           aria-label="Add a new task"
           disabled={isTranscribing}
           className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'animate-pulse opacity-70' : ''}`}
