@@ -27,8 +27,20 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
   const startRecording = async () => {
     try {
+      // Check for browser support
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Your browser does not support audio recording.");
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      // Determine supported mime type
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
+        ? 'audio/webm' 
+        : 'audio/mp4';
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -39,7 +51,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
         transcribeAudio(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
@@ -48,7 +60,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       setIsRecording(true);
     } catch (err) {
       console.error("Error accessing microphone:", err);
-      alert("Could not access microphone. Please check your permissions.");
+      alert("Could not access microphone. Please ensure you have granted permission and are using HTTPS.");
     }
   };
 
@@ -72,22 +84,37 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           model: 'gemini-3-flash-preview',
           contents: {
             parts: [
-              { inlineData: { data: base64Audio, mimeType: 'audio/webm' } },
-              { text: "Transcribe this audio into a clear and concise to-do list task. Only return the transcribed text, nothing else." }
+              { 
+                inlineData: { 
+                  data: base64Audio, 
+                  mimeType: blob.type || 'audio/webm' 
+                } 
+              },
+              { text: "Transcribe this audio into a single, concise to-do list task string. Output ONLY the transcribed text. Do not include quotes or preamble." }
             ]
+          },
+          config: {
+            // Optimization: Disable thinking for faster transcription
+            thinkingConfig: { thinkingBudget: 0 },
+            maxOutputTokens: 150,
+            temperature: 0.1, // Lower temperature for more deterministic transcription
           }
         });
 
         const transcript = response.text || "";
         if (transcript.trim()) {
-          setText(transcript.trim());
+          // Clean up potential AI artifacts like "Task: " or quotes
+          const cleanedText = transcript.trim()
+            .replace(/^["']|["']$/g, '')
+            .replace(/^Task:\s*/i, '');
+          setText(cleanedText);
         }
         setIsTranscribing(false);
       };
     } catch (err) {
       console.error("Transcription error:", err);
       setIsTranscribing(false);
-      alert("Failed to transcribe audio. Please try again.");
+      alert("Transcription failed. This can happen on slow connections or with unsupported audio formats.");
     }
   };
 
@@ -106,14 +133,14 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={isTranscribing ? "Transcribing your voice..." : "Add a new task..."}
+          placeholder={isTranscribing ? "Processing audio..." : "Add a new task..."}
           aria-label="Add a new task"
           disabled={isTranscribing}
           className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'animate-pulse opacity-70' : ''}`}
         />
         {isTranscribing && (
           <div className="absolute right-3 top-1/2 -translate-y-1/2">
-            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
           </div>
         )}
       </div>
