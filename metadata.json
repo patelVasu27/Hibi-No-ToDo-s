@@ -1,0 +1,7 @@
+{
+  "name": "Hibi No ToDo's",
+  "description": "A minimalist, modern, and clean daily to-do list application designed for students and working professionals to manage their tasks efficiently.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
