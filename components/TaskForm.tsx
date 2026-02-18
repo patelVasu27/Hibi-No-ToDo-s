@@ -28,13 +28,13 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const startRecording = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Audio recording is not supported in this browser or context (requires HTTPS).");
+        alert("Audio recording is not supported in this environment (Ensure HTTPS is used).");
         return;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Determine supported mime type carefully
+      // Select most compatible MIME type for recording
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
         ? 'audio/webm' 
         : 'audio/mp4';
@@ -51,10 +51,10 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-        if (audioBlob.size > 1000) { // Ensure there's actually audio data (>1KB)
+        if (audioBlob.size > 500) { 
             transcribeAudio(audioBlob);
         } else {
-            console.warn("Audio recording too short or empty.");
+            console.warn("Recording was too short to process.");
             setIsTranscribing(false);
         }
         stream.getTracks().forEach(track => track.stop());
@@ -64,7 +64,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
       setIsRecording(true);
     } catch (err) {
       console.error("Microphone access error:", err);
-      alert("Microphone access denied or failed. Ensure your site is served over HTTPS.");
+      alert("Microphone access failed. Please ensure permissions are granted.");
     }
   };
 
@@ -78,53 +78,55 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
   const transcribeAudio = async (blob: Blob) => {
     setIsTranscribing(true);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onloadend = async () => {
-        const base64Audio = (reader.result as string).split(',')[1];
-        
-        if (!process.env.API_KEY) {
-            throw new Error("API Key is missing from environment.");
+      const base64Audio = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      if (!base64Audio) throw new Error("Failed to encode audio data.");
+
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      // Normalize MIME type: strip codecs (e.g., 'audio/webm;codecs=opus' -> 'audio/webm')
+      const normalizedMimeType = blob.type.split(';')[0] || 'audio/webm';
+
+      // Use a single object for contents (standard single-turn schema)
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+          parts: [
+            { 
+              inlineData: { 
+                data: base64Audio, 
+                mimeType: normalizedMimeType 
+              } 
+            },
+            { text: "Transcribe the task from this audio. Return ONLY the transcribed text. Be concise." }
+          ]
+        },
+        config: {
+          maxOutputTokens: 100,
+          temperature: 0, // Lower temperature = faster, more accurate transcription
         }
+      });
 
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        // Clean MIME type: API expects 'audio/webm', not 'audio/webm;codecs=opus'
-        const cleanMimeType = blob.type.split(';')[0] || 'audio/webm';
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: [{
-            parts: [
-              { 
-                inlineData: { 
-                  data: base64Audio, 
-                  mimeType: cleanMimeType 
-                } 
-              },
-              { text: "Transcribe this audio. Return ONLY the text of the task. Keep it concise. No conversational filler." }
-            ]
-          }],
-          config: {
-            thinkingConfig: { thinkingBudget: 0 }, // Minimize latency
-            maxOutputTokens: 100,
-            temperature: 0, // Deterministic output
-          }
-        });
-
-        const transcript = response.text || "";
-        if (transcript.trim()) {
-          const cleanedText = transcript.trim()
-            .replace(/^["']|["']$/g, '')
-            .replace(/^Task:\s*/i, '');
-          setText(cleanedText);
-        }
-        setIsTranscribing(false);
-      };
+      const transcript = response.text;
+      if (transcript && transcript.trim()) {
+        const cleanedText = transcript.trim()
+          .replace(/^["']|["']$/g, '')
+          .replace(/^Task:\s*/i, '');
+        setText(cleanedText);
+      }
     } catch (err) {
-      console.error("Transcription API Error:", err);
+      console.error("API Transcription Error:", err);
+      alert("Transcription failed. This may be due to a poor connection or unsupported browser format.");
+    } finally {
       setIsTranscribing(false);
-      alert("API Connection Error. Please verify your internet connection and API key status.");
     }
   };
 
@@ -143,7 +145,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onAddTask }) => {
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={isTranscribing ? "Processing audio..." : isRecording ? "Listening..." : "Add a new task..."}
+          placeholder={isTranscribing ? "Transcribing..." : isRecording ? "Recording... tap to stop" : "Add a new task..."}
           aria-label="Add a new task"
           disabled={isTranscribing}
           className={`w-full bg-white/5 border border-white/10 backdrop-blur-sm rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300 min-w-0 ${isTranscribing ? 'animate-pulse opacity-70' : ''}`}
